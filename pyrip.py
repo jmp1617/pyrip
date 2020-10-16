@@ -96,7 +96,7 @@ class ReceiverT(threading.Thread):
         print(str(threading.current_thread()) + "Started")
         while True:
             data, addr = self.socket.recvfrom(4096)
-            print('Connection recieved from: ' + addr)
+            print('Connection received from: ' + addr)
 
 
 class Router:
@@ -120,6 +120,7 @@ class Router:
             self.connections = configuration.GLADOS_CONNECTIONS
         else:
             print("ip address not associated with any configuration. exiting.")
+            exit()
         self.ip = self.configuration[0]
         self.port = self.configuration[1]
         self.routing_table = RoutingTable()
