@@ -57,6 +57,12 @@ class RoutingTable:
     def get_entries(self):
         return self.entries
 
+    def get_all_subnets(self):
+        subnets = []
+        for entry in self.entries:
+            subnets.append(entry.get_subnet())
+        return subnets
+
 
 # represents a route to a destination address space
 class RouteEntry:
@@ -64,6 +70,7 @@ class RouteEntry:
         self.address = address
         self.mask_bits = mask_bits
         self.nexthop = nexthop
+        self.subnet = calculate_subnet(self.address, self.mask_bits)
         self.cost = cost
 
     def get_address(self):
@@ -78,11 +85,18 @@ class RouteEntry:
     def get_cost(self):
         return self.cost
 
+    def get_subnet(self):
+        return self.subnet
+
+    def __eq__(self, other):
+        return self.subnet == other.get_subnet()
+
     def to_dict(self):
         return {
             "address": str(self.address),
             "mask_bits": self.mask_bits,
             "next_hop": str(self.nexthop),
+            "subnet": str(self.subnet),
             "cost": self.cost
         }
 
@@ -126,7 +140,7 @@ class PrinterT(threading.Thread):
         print("|Address____________|Next-hop___________|Cost_____________|")
         print("+-------------------+-------------------+-----------------+")
         for entry in self.routing_table.get_entries():
-            subnet = calculate_subnet(entry.get_address(), entry.get_mask_bits())
+            subnet = entry.get_subnet()
             print("|" + subnet + "/" + str(entry.get_mask_bits()), end='')
             for i in range(0, 18-(len(subnet)+len(str(entry.get_mask_bits())))):
                 print("_", end='')
@@ -159,7 +173,17 @@ class ReceiverT(threading.Thread):
             self.routing_table.expose_lock().release()
 
     def update_table(self, source_of_update, sources_table):
-        pass
+        # if the entry doesnt exist in this routers table, add it and calculate the cost
+        # ( add one to all as route cost is 1 )
+        # add one because it is coming from a router 1 cost unit away aka neighbor
+        for entry in sources_table:
+            if entry.get_subnet() not in self.routing_table.get_all_subnets():
+                self.routing_table.add_entry(RouteEntry(
+                    entry.get_address(), entry.get_mask_bits(), source_of_update[0], entry.get_cost()+1
+                ))
+            else:  # see if this new path is less than the one already present
+                pass
+
 
 
 class Router:
