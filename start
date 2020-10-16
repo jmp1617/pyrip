@@ -1,0 +1,6 @@
+docker build -f Dockerfile . -t pyrip;
+docker network create --subnet=129.21.0.0/16 testnet;
+docker run --name queeg -d --net testnet --ip 129.21.30.37 -it pyrip python3 pyrip.py 129.21.30.37;
+docker run --name comet -d --net testnet --ip 129.21.34.80 -it pyrip python3 pyrip.py 129.21.34.80;
+docker run --name rhea -d --net testnet --ip 129.21.27.49 -it pyrip python3 pyrip.py 129.21.27.49;
+docker run --name glados -d --net testnet --ip 129.21.22.196 -it pyrip python3 pyrip.py 129.21.22.196;

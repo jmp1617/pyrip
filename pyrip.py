@@ -31,6 +31,9 @@ class RoutingTable:
             json_arr.append(entry.to_dict())
         return json.dumps(json_arr)
 
+    def get_entries(self):
+        return self.entries
+
 
 # represents a route to a destination address space
 class RouteEntry:
@@ -42,6 +45,15 @@ class RouteEntry:
 
     def get_address(self):
         return self.address
+
+    def get_mask_bits(self):
+        return self.mask_bits
+
+    def get_nexthop(self):
+        return self.nexthop
+
+    def get_cost(self):
+        return self.cost
 
     def to_dict(self):
         return {
@@ -83,8 +95,25 @@ class PrinterT(threading.Thread):
         while True:
             while self.routing_table.expose_lock().locked():  # wait in case the table is being modified
                 pass
-            print(str(threading.current_thread()) + " Table:" + self.routing_table.to_json())  if configuration.D_PRNT else print("", end='')
+            self.display()
             time.sleep(configuration.PRINT_CADENCE)
+
+    def display(self):
+        print("+-------------------+-------------------+-----------------+")
+        print("|Address____________|Next-hop___________|Cost_____________|")
+        print("+-------------------+-------------------+-----------------+")
+        for entry in self.routing_table.get_entries():
+            print("|" + entry.get_address() + "/" + str(entry.get_mask_bits()), end='')
+            for i in range(0, 18-(len(entry.get_address())+len(str(entry.get_mask_bits())))):
+                print("_", end='')
+            print("|" + entry.get_nexthop(), end='')
+            for i in range(0, 19-len(entry.get_nexthop())):
+                print("_", end='')
+            print("|" + str(entry.get_cost()), end='')
+            for i in range(0, 17-len(str(entry.get_cost()))):
+                print("_", end='')
+            print('|')
+        print("+---------------------------------------------------------+\n")
 
 
 class ReceiverT(threading.Thread):
@@ -106,8 +135,7 @@ class ReceiverT(threading.Thread):
             self.routing_table.expose_lock().release()
 
     def update_table(self, source_of_update, sources_table):
-        print(source_of_update)
-        print(sources_table)
+        pass
 
 
 class Router:
