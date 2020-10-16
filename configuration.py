@@ -14,3 +14,8 @@ GLADOS_CONNECTIONS = [RHEA, QUEEG]
 # timers
 SEND_CADENCE = 30  # seconds
 PRINT_CADENCE = 10  # seconds
+
+# debug
+D_RECV = False
+D_SEND = False
+D_PRNT = False

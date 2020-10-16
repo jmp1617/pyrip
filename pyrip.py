@@ -53,19 +53,23 @@ class RouteEntry:
 
 
 class SenderT(threading.Thread):
-    def __init__(self, routing_table, connections, *args, **kwargs):
+    def __init__(self, s, routing_table, connections, port, *args, **kwargs):
         super(SenderT, self).__init__(*args, **kwargs)
         self.routing_table = routing_table
         self.connections = connections
+        self.port = port
+        self.socket = s
 
     def run(self):
         # send the routing table to each node in connections
-        print(str(threading.current_thread()) + "Started")
+        print(str(threading.current_thread()) + "Started") if configuration.D_SEND else print("", end='')
         while True:
             for connection in self.connections:
                 while self.routing_table.expose_lock().locked():  # wait in case the table is being modified
                     pass
-                print(str(threading.current_thread()) + " Sending table to " + str(connection))
+                print(str(threading.current_thread()) + " Sending table to " + str(connection)) if configuration.D_SEND else print("", end='')
+                sent = self.socket.sendto(self.routing_table.to_json().encode(), connection)
+                print(str(threading.current_thread()) + " Bytes sent: " + str(sent)) if configuration.D_SEND else print("", end='')
             time.sleep(configuration.SEND_CADENCE)
 
 
@@ -75,28 +79,35 @@ class PrinterT(threading.Thread):
         self.routing_table = routing_table
 
     def run(self):
-        print(str(threading.current_thread()) + "Started")
+        print(str(threading.current_thread()) + "Started") if configuration.D_PRNT else print("", end='')
         while True:
             while self.routing_table.expose_lock().locked():  # wait in case the table is being modified
                 pass
-            print(str(threading.current_thread()) + " Table:" + self.routing_table.to_json())
+            print(str(threading.current_thread()) + " Table:" + self.routing_table.to_json())  if configuration.D_PRNT else print("", end='')
             time.sleep(configuration.PRINT_CADENCE)
 
 
 class ReceiverT(threading.Thread):
-    def __init__(self, routing_table, connections, port, *args, **kwargs):
+    def __init__(self, s, routing_table, connections, port, *args, **kwargs):
         super(ReceiverT, self).__init__(*args, **kwargs)
         self.routing_table = routing_table
         self.connections = connections
         self.port = port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(('', self.port))
+        self.socket = s
 
     def run(self):
-        print(str(threading.current_thread()) + "Started")
+        print(str(threading.current_thread()) + "Started")  if configuration.D_RECV else print("", end='')
         while True:
             data, addr = self.socket.recvfrom(4096)
-            print('Connection received from: ' + addr)
+            print(str(threading.current_thread()) + 'Connection received from: ' + str(addr)) if configuration.D_RECV else print("", end='')
+            print(str(threading.current_thread()) + 'Data:' + str(json.loads(data.decode('utf-8'))))  if configuration.D_RECV else print("", end='')
+            self.routing_table.expose_lock().acquire()
+            self.update_table(addr, json.loads(data.decode('utf-8')))
+            self.routing_table.expose_lock().release()
+
+    def update_table(self, source_of_update, sources_table):
+        print(source_of_update)
+        print(sources_table)
 
 
 class Router:
@@ -124,6 +135,9 @@ class Router:
         self.ip = self.configuration[0]
         self.port = self.configuration[1]
         self.routing_table = RoutingTable()
+        # socket to be used for communication
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(('', self.port))
 
     def start_rip(self):
         # prepare local router entry
@@ -131,9 +145,9 @@ class Router:
         self.routing_table.add_entry(self_entry)
 
         # define threads
-        threads = [SenderT(self.routing_table, self.connections, name="Sender"),
+        threads = [SenderT(self.socket, self.routing_table, self.connections, self.port, name="Sender"),
                    PrinterT(self.routing_table, name="Printer"),
-                   ReceiverT(self.routing_table, self.connections, self.port, name="Receiver")]
+                   ReceiverT(self.socket, self.routing_table, self.connections, self.port, name="Receiver")]
         # start the threads
         for thread in threads:
             thread.start()
