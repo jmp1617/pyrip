@@ -19,3 +19,6 @@ PRINT_CADENCE = 10  # seconds
 D_RECV = False
 D_SEND = False
 D_PRNT = False
+
+# subnet mask bits
+SUB_BITS = 26

@@ -7,6 +7,29 @@ import time
 import socket
 
 
+# calculate a subnet from an address in that subnet and the number of mask bits per octet
+def calculate_subnet(ip_address, mask_bits):
+    octet_arr = ip_address.split('.')
+    subnet_octet_arr = []
+    bits_remaining = mask_bits
+    for octet in octet_arr:
+        if bits_remaining >= 8:
+            subnet_octet_arr.append(0xFF & int(octet))
+            bits_remaining -= 8
+        elif bits_remaining == 0:
+            subnet_octet_arr.append(0)
+        else:
+            mask = 0
+            bits_pushed = 0
+            for bits_pushed in range(0, bits_remaining):
+                mask = mask ^ 1
+                mask = mask << 1
+            for i in range(0, 7-bits_pushed):
+                mask = mask << 1
+            subnet_octet_arr.append(mask & int(octet))
+    return str(subnet_octet_arr[0]) + '.' + str(subnet_octet_arr[1]) + '.' + str(subnet_octet_arr[2]) + '.' + str(subnet_octet_arr[3])
+
+
 # representation of the router routing table containing route entries
 class RoutingTable:
     def __init__(self):
@@ -103,8 +126,9 @@ class PrinterT(threading.Thread):
         print("|Address____________|Next-hop___________|Cost_____________|")
         print("+-------------------+-------------------+-----------------+")
         for entry in self.routing_table.get_entries():
-            print("|" + entry.get_address() + "/" + str(entry.get_mask_bits()), end='')
-            for i in range(0, 18-(len(entry.get_address())+len(str(entry.get_mask_bits())))):
+            subnet = calculate_subnet(entry.get_address(), entry.get_mask_bits())
+            print("|" + subnet + "/" + str(entry.get_mask_bits()), end='')
+            for i in range(0, 18-(len(subnet)+len(str(entry.get_mask_bits())))):
                 print("_", end='')
             print("|" + entry.get_nexthop(), end='')
             for i in range(0, 19-len(entry.get_nexthop())):
@@ -169,7 +193,7 @@ class Router:
 
     def start_rip(self):
         # prepare local router entry
-        self_entry = RouteEntry(self.ip, 24, self.ip, 0)
+        self_entry = RouteEntry(self.ip, configuration.SUB_BITS, self.ip, 0)
         self.routing_table.add_entry(self_entry)
 
         # define threads
