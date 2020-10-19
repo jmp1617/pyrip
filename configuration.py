@@ -12,13 +12,22 @@ RHEA_CONNECTIONS = [COMET, GLADOS]
 GLADOS_CONNECTIONS = [RHEA, QUEEG]
 
 # timers
-SEND_CADENCE = 30  # seconds
-PRINT_CADENCE = 10  # seconds
+SEND_CADENCE = 10  # seconds
+PRINT_CADENCE = 5  # seconds
 
 # debug
 D_RECV = False
 D_SEND = False
 D_PRNT = False
+D_POISON = False
 
-# subnet mask bits
-SUB_BITS = 26
+# subnet mask bits. Example: 255.255.255.0 = 24 = /24
+SUB_BITS = 24
+
+# poison reverse
+HOP_LIMIT = 10
+
+# allowances for no contact
+# this refers to the amount of times a router can not hear from another router each send cycle before declaring dead.
+# example: TTL = 4 * SEND_CADENCE = 30 = 2 minutes
+TTL = 4
