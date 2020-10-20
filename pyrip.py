@@ -59,7 +59,7 @@ class RoutingTable:
     def to_json(self, connection):
         json_arr = []
         for entry in self.entries:
-            # dont send routes learned from neighbor to itself
+            # dont send routes learned from neighbor to that neighbor
             if entry.get_nexthop() != connection[0]:
                 json_arr.append(entry.to_dict())
         return json.dumps(json_arr)
@@ -78,6 +78,12 @@ class RoutingTable:
             if subnet == entry.get_subnet():
                 return entry.get_cost()
         return -1
+
+    def get_nexthop_with_subnet(self, subnet):
+        for entry in self.entries:
+            if subnet == entry.get_subnet():
+                return entry.get_nexthop()
+        return ""
 
     def update_entry_with_subnet(self, subnet, address, mask_bits, nexthop, cost):
         for entry in self.entries:
@@ -167,7 +173,7 @@ class SenderT(threading.Thread):
             for connection in self.connections:
                 while self.routing_table.expose_lock().locked():  # wait in case the table is being modified
                     pass
-                print(str(threading.current_thread()) + " Sending table to " + str(connection)) \
+                print(str(threading.current_thread()) + " Sending table to " + str(connection) ) \
                     if configuration.D_SEND else print("", end='')
                 # send all routes except those learned from the destination neighbor ( split horizon )
                 sent = self.socket.sendto(self.routing_table.to_json(connection).encode(), connection)
@@ -181,6 +187,8 @@ class SenderT(threading.Thread):
                 ttl = entry.get_ttl()
                 # don't have the router poison itself and only if neighbor
                 if entry.get_cost() != 0 and entry.get_address() in conn_addr:
+                    print("TTLSTAT>>" + entry.get_address() + ": " + str(ttl)) \
+                        if configuration.D_POISON else print("", end="")
                     if ttl <= 0:  # the router hasn't been heard from in configuration.TTL send cycles
                         # of configuration.SEND_CADENCE seconds.
                         entry.poison()  # it got to low
@@ -195,6 +203,7 @@ class PrinterT(threading.Thread):
     def __init__(self, routing_table, *args, **kwargs):
         super(PrinterT, self).__init__(*args, **kwargs)
         self.routing_table = routing_table
+        self.counter = 0
 
     def run(self):
         print(str(threading.current_thread()) + "Started") if configuration.D_PRNT else print("", end='')
@@ -205,6 +214,7 @@ class PrinterT(threading.Thread):
             time.sleep(configuration.PRINT_CADENCE)
 
     def display(self):
+        print("print iteration: " + str(self.counter))
         print("+-------------------+-------------------+-----------------+")
         print("|Address____________|Next-hop___________|Cost_____________|")
         print("+-------------------+-------------------+-----------------+")
@@ -221,6 +231,7 @@ class PrinterT(threading.Thread):
                 print("_", end='')
             print('|')
         print("+---------------------------------------------------------+\n")
+        self.counter+=1
 
 
 class ReceiverT(threading.Thread):
@@ -234,6 +245,8 @@ class ReceiverT(threading.Thread):
 
     def run(self):
         print(str(threading.current_thread()) + "Started") if configuration.D_RECV else print("", end='')
+        cooldown = 0
+        should_hold = False
         while True:
             data, addr = self.socket.recvfrom(4096)
             print(str(threading.current_thread()) + 'Connection received from: ' + str(
@@ -243,7 +256,15 @@ class ReceiverT(threading.Thread):
             while self.routing_table.expose_lock().locked():  # wait in case the table is being modified
                 pass
             self.routing_table.expose_lock().acquire()
-            self.update_table(addr, json.loads(data.decode('utf-8')))
+
+            if cooldown <= 0:  # dont process updates during HOLD DOWN if reported by update function
+                should_hold = self.update_table(
+                    addr, json.loads(data.decode('utf-8')), self.routing_table.expose_lock()
+                )
+            if should_hold:  # this allows for ttl to not drop during hold down
+                if cooldown <= 0:
+                    cooldown = configuration.HOLD_DOWN
+
             # since we heard from the router we can reset its ttl as it is alive
             # only reset if the router is one of the neighbors
             conn_addr = []
@@ -252,11 +273,17 @@ class ReceiverT(threading.Thread):
             if addr[0] in conn_addr:
                 self.routing_table.reset_ttl_of_entry_with_address(addr[0])
             self.routing_table.expose_lock().release()
+            if cooldown > 0:
+                time.sleep(1)
+                print("COOLDOWNSTAT>>" + str(cooldown)) \
+                    if configuration.D_POISON else print("", end="")
+                cooldown -= 1
 
-    def update_table(self, source_of_update, sources_table):
+    def update_table(self, source_of_update, sources_table, lock):
         # if the entry doesnt exist in this routers table, add it and calculate the cost
         # ( add one to all as route cost is 1 )
         # add one because it is coming from a router 1 cost unit away aka neighbor
+        should_hold = False
         for entry in sources_table:
             if entry['subnet'] not in self.routing_table.get_all_subnets():
                 # this also takes care of looping. Since the router tracks itself, its network is always in the table
@@ -264,24 +291,54 @@ class ReceiverT(threading.Thread):
                 self.routing_table.add_entry(RouteEntry(
                     entry['address'], entry['mask_bits'], source_of_update[0], entry['cost'] + 1
                 ))
-            else:  # see if this new path is less than the one already present
+            elif self.routing_table.get_cost_with_subnet(entry['subnet']) != 0:  # see if this new path is less than the one already present
                 original_cost = self.routing_table.get_cost_with_subnet(entry['subnet'])
+                new_possible_cost = entry['cost'] + 1
                 if entry['cost'] == configuration.HOP_LIMIT:
                     new_possible_cost = configuration.HOP_LIMIT
-                else:
-                    new_possible_cost = entry['cost'] + 1
                 # if the cost to get to the destination network is less from the new update table, update the routing
-                # table to use this cheaper route. Dont accept a route back through self.
+                # table to use this cheaper route.
                 if (
-                        new_possible_cost < original_cost or
-                        new_possible_cost == configuration.HOP_LIMIT
+                        new_possible_cost < original_cost
                 ):
+                    # reset ttl so the send thread doesnt poison before we get through the whole table
+                    self.routing_table.reset_ttl_of_entry_with_address(source_of_update[0])
                     self.routing_table.update_entry_with_subnet(
                         entry['subnet'], entry['address'], entry['mask_bits'], source_of_update[0], new_possible_cost
                     )
-                    if entry['cost'] == configuration.HOP_LIMIT and original_cost != configuration.HOP_LIMIT:
-                        # poison reverse, send all routes
-                        self.socket.sendto(self.routing_table.to_json(("", 0)).encode(), source_of_update)
+                    if original_cost == configuration.HOP_LIMIT:  # if the router was previously unreachable
+                        # its back on so give time to alert other routers
+                        should_hold = True
+                if (
+                        entry['cost'] == configuration.HOP_LIMIT and
+                        self.routing_table.get_cost_with_subnet(entry['subnet']) != configuration.HOP_LIMIT
+                ):
+                    self.routing_table.update_entry_with_subnet(
+                        entry['subnet'], entry['address'], entry['mask_bits'], source_of_update[0], configuration.HOP_LIMIT
+                    )
+                    # poison reverse
+                    self.socket.sendto(self.routing_table.to_json(("", 0)).encode(), source_of_update)
+                if entry['cost'] == configuration.HOP_LIMIT and \
+                        self.routing_table.get_cost_with_subnet(entry['subnet']) != configuration.HOP_LIMIT:
+                    should_hold = True
+
+        return should_hold
+
+
+# make the socket thread safe
+class SafeSocket:
+    def __init__(self, address_conf):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(address_conf)
+        self.socket_lock = threading.Lock()
+
+    def sendto(self, data, destination):
+        result = self.socket.sendto(data, destination)
+        return result
+
+    def recvfrom(self, size):
+        result = self.socket.recvfrom(size)
+        return result
 
 
 class Router:
@@ -310,8 +367,7 @@ class Router:
         self.port = self.configuration[1]
         self.routing_table = RoutingTable()
         # socket to be used for communication
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(('', self.port))
+        self.socket = SafeSocket(('', self.port))
 
     def start_rip(self):
         # prepare local router entry
