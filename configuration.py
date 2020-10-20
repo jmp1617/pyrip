@@ -12,8 +12,8 @@ RHEA_CONNECTIONS = [COMET, GLADOS]
 GLADOS_CONNECTIONS = [RHEA, QUEEG]
 
 # timers
-SEND_CADENCE = 10  # seconds
-PRINT_CADENCE = 5  # seconds
+SEND_CADENCE = 5  # seconds
+PRINT_CADENCE = 3 # seconds
 
 # debug
 D_RECV = False

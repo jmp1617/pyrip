@@ -12,7 +12,7 @@ def calculate_subnet(ip_address, mask_bits):
     octet_arr = ip_address.split('.')
     subnet_octet_arr = []
     bits_remaining = mask_bits
-    for octet in octet_arr:
+    for octet in octet_arr:  # go through all octets and mask appropriately
         if bits_remaining >= 8:
             subnet_octet_arr.append(0xFF & int(octet))
             bits_remaining -= 8
@@ -24,7 +24,7 @@ def calculate_subnet(ip_address, mask_bits):
             for bits_pushed in range(0, bits_remaining):
                 mask = mask ^ 1
                 mask = mask << 1
-            for i in range(0, 7 - bits_pushed):
+            for i in range(0, 7 - bits_pushed):  # already shifted once
                 mask = mask << 1
             subnet_octet_arr.append(mask & int(octet))
     return str(
@@ -42,7 +42,7 @@ def calculate_subnet(ip_address, mask_bits):
 class RoutingTable:
     def __init__(self):
         self.entries = []
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()  # lock for sharing the table between the receiving and sending threads
 
     def add_entry(self, route_entry):
         self.entries.append(route_entry)
@@ -55,11 +55,13 @@ class RoutingTable:
     def expose_lock(self):
         return self.lock
 
-    # function to convert table to json for UDP payload
-    def to_json(self):
+    # helper function to convert table to json for UDP payload
+    def to_json(self, connection):
         json_arr = []
         for entry in self.entries:
-            json_arr.append(entry.to_dict())
+            # dont send routes learned from neighbor to itself
+            if entry.get_nexthop() != connection[0]:
+                json_arr.append(entry.to_dict())
         return json.dumps(json_arr)
 
     def get_entries(self):
@@ -167,7 +169,8 @@ class SenderT(threading.Thread):
                     pass
                 print(str(threading.current_thread()) + " Sending table to " + str(connection)) \
                     if configuration.D_SEND else print("", end='')
-                sent = self.socket.sendto(self.routing_table.to_json().encode(), connection)
+                # send all routes except those learned from the destination neighbor ( split horizon )
+                sent = self.socket.sendto(self.routing_table.to_json(connection).encode(), connection)
                 print(str(threading.current_thread()) + " Bytes sent: " + str(sent)) \
                     if configuration.D_SEND else print("", end='')
             # poison calculations
@@ -269,11 +272,16 @@ class ReceiverT(threading.Thread):
                     new_possible_cost = entry['cost'] + 1
                 # if the cost to get to the destination network is less from the new update table, update the routing
                 # table to use this cheaper route. Dont accept a route back through self.
-                if (new_possible_cost < original_cost and entry['next_hop'] != self.self_ip) \
-                        or new_possible_cost == configuration.HOP_LIMIT:
+                if (
+                        new_possible_cost < original_cost or
+                        new_possible_cost == configuration.HOP_LIMIT
+                ):
                     self.routing_table.update_entry_with_subnet(
                         entry['subnet'], entry['address'], entry['mask_bits'], source_of_update[0], new_possible_cost
                     )
+                    if entry['cost'] == configuration.HOP_LIMIT and original_cost != configuration.HOP_LIMIT:
+                        # poison reverse, send all routes
+                        self.socket.sendto(self.routing_table.to_json(("", 0)).encode(), source_of_update)
 
 
 class Router:
